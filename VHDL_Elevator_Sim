@@ -1,0 +1,443 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use IEEE.std_logic_arith.all;
+use IEEE.std_logic_unsigned.all;
+
+
+entity hlsm_elevator is
+
+port (	clk, DrC: inout bit; 
+	rst: in bit; T, B: inout bit; 
+	Fo, Fc, MS : in bit; TMR : inout bit; 
+	UpN, DnN, Elv1FlN, Elv2FlN : in bit_vector (2 downto 0);
+	Q1, Q2, Q: inout bit_vector (2 downto 0); 
+	Fstart, Fstop: in bit;
+	Elv1, Elv2 : inout bit_vector (2 downto 0);
+	ElvSelected : inout bit_vector (1 downto 0);
+	push, pull: inout bit;
+	din, dout: inout bit_vector (2 downto 0));
+end hlsm_elevator;
+
+architecture beh of hlsm_elevator is 
+	signal clk_half_period:time:=5 ns;
+	type statetype is (init, waitState, checkQueue, openState,close, Acc, Const, Dec, Stop);
+	signal currentstate, nextstate : statetype;
+
+	type mem is array (0 to 3) of bit_vector (2 downto 0); --first define the type of array.
+	signal queue : mem := (others=> (others=>'0')); --queue is a 4 element array of bit_vector (2 downto 0) others: fill array with '0'
+
+	
+begin
+	p1:process(clk)
+	begin
+		clk<=not(clk) after clk_half_period;
+	end process p1;
+
+ 	statereg: process(clk, rst)
+	begin
+		if (rst='1') then
+	currentstate <= init; -- initial state
+		 elsif (rising_edge(clk)) then
+		 currentstate <= nextstate;
+		end if;
+	end process statereg;
+
+	queue_design : process (clk,push,pull,din)
+	  
+	variable mem : bit_vector (2 downto 0) ;
+    	variable i : integer := 0;
+	    begin                   
+	        if (rising_edge (clk)) then
+	            if (push='1') then
+	                queue(i) <= din;  
+	                if (i<3) then
+	                    i := i + 1;       
+	                end if;
+	            elsif (pull='1') then   
+	                dout <= queue(0); 
+	                if (i>0) then
+	                    i := i - 1;
+	                end if;
+	                queue(0 to 2) <= queue(1 to 3);
+	            end if;
+	        end if;
+	    end process queue_design;
+		
+	comblogic: process(currentstate, T, B, Fo, Fc, DrC, MS, UpN, DnN, Elv1FlN, Elv2FlN, TMR, Fstart, Fstop)
+	
+	variable IQ : integer := 0;
+	variable IElv1 : integer := 0;
+	variable IElv2 : integer := 0;
+	variable FstartVar : integer := 0;
+	variable FstopVar : integer := 0;
+
+	begin
+
+	case currentstate is
+  	-- init
+	when init =>
+	Q <= "000";
+	Q1 <= "000";
+	Q2 <= "000";
+	T <= '0';
+	B <= '0';
+	DrC <= '0';
+	Elv1 <= "001";
+	Elv2 <= "001";
+	push <= '0';
+	pull <= '0';
+	--queue(0) <= "100"; queue(1) <= "100"; queue(2) <= "100"; queue(3) <= "100";
+	nextstate <= waitState;
+
+	-- wait
+	when waitState =>
+	ElvSelected <= "00";
+	if (Elv1FlN'event) then
+		Q1 <= Elv1FlN;
+		push <= '1';
+		din <= Elv1FlN;
+		nextState <= checkQueue;
+	end if;
+	
+	if (Elv2FlN'event) then
+		Q2 <= Elv2FlN;
+		push <= '1';
+		din <= Elv2FlN;
+		nextState <= checkQueue;
+	end if;
+
+	if (UpN'event) then
+		Q <= UpN;
+		push <= '1';
+		din <= UpN;
+		nextState <= checkQueue;
+	end if;
+	if (DnN'event) then
+		Q <= DnN;
+		push <= '1';
+		din <= DnN;
+		nextState <= checkQueue;
+	end if;
+	
+	--Check Queue
+	when checkQueue =>
+	push <= '0';
+	--Specific Elevator Q Request
+	if (Q1 /= "000") then
+		ElvSelected <= "01";
+		push <= '0';
+		nextState <= const;
+	elsif (Q2 /= "000") then 
+		ElvSelected <= "10";
+		push <= '0';
+		nextState <= const;
+	end if;
+	
+	--General Q Request
+	if (Q /= "000") then
+	--Integer Variable Definitions
+		if(Q = "001") then IQ := 1; end if;
+		if(Q = "010") then IQ := 2; end if;
+		if(Q = "011") then IQ := 3; end if;
+		if(Q = "100") then IQ := 4; end if;
+	
+		if(Elv1 = "001") then IElv1 := 1; end if;
+		if(Elv1 = "010") then IElv1 := 2; end if;
+		if(Elv1 = "011") then IElv1 := 3; end if;
+		if(Elv1 = "100") then IElv1 := 4; end if;
+	
+		if(Elv2 = "001") then IElv2 := 1; end if;
+		if(Elv2 = "010") then IElv2 := 2; end if;
+		if(Elv2 = "011") then IElv2 := 3; end if;
+		if(Elv2 = "100") then IElv2 := 4; end if;
+		--Check which Elevator to send
+		if (IQ - IElv1) = (IQ - IElv2) then
+			ElvSelected <= "01";
+			Q1 <= Q;
+			if (Q1 = Elv1) then
+			nextstate <= openstate;
+			else
+			nextState <= Acc;
+			end if;
+		elsif (IQ = IElv1) then
+			ElvSelected <= "01";
+			Q1 <= Q;
+			nextstate <= openState;
+		elsif (IQ = IElv2) then
+			ElvSelected <= "10";
+			Q2 <= Q;
+			nextstate <= openState;
+		elsif (abs(IQ - IElv1)) > (abs(IQ - IElv2)) then
+			ElvSelected <= "10";
+			Q2 <= Q;
+			nextstate <= Acc;
+		elsif (abs(IQ - IElv1)) < (abs(IQ - IElv2)) then
+			ElvSelected <= "01";
+			Q1 <= Q;			
+			nextstate <= Acc;
+  		end if;
+	--Check for stored Q's
+	--elsif
+	elsif (Q = "000") then
+		nextState <= waitState;
+	end if;
+	
+  	-- open
+	when openState =>
+ 	Q <= "000";
+	if (ElvSelected = "01") then
+		Q1 <= "000";
+	elsif (ElvSelected = "10") then
+		Q2 <= "000";
+	end if;
+	T <= '0';
+	B <= '0';
+	DrC <= '1';
+	pull <= '1';
+	TMR <= '1' after 25 ns;	
+	
+  	if (MS = '1' or Fo = '1') then
+  		nextstate <= openState;
+  	elsif (TMR = '1' or Fc = '1') then
+  		nextstate <= close;
+	end if;
+	
+  	--close
+	when close => 
+	pull <= '0';
+	TMR <= '0';
+	DrC <= '0';
+  	if (Q = "000") then
+		nextstate <= checkQueue;
+	elsif  (ElvSelected = "01") then
+		if (Q /= "000") then
+		nextstate <= Acc;
+		end if;
+	elsif (ElvSelected = "10") then
+		if (Q /= "000") then
+		nextstate <= Acc;
+		end if;
+	end if;
+
+	-- Acc
+	when Acc => 
+		if(Fstop = '1') then
+			nextstate <= Dec;
+		else 
+			nextstate <= Const;
+	 	end if;
+  	--const
+	when Const => 
+	push <= '0';
+	if (Elv1FlN'event) then
+		Q1 <= Elv1FlN;
+		push <= '1';
+		din <= Elv1FlN;
+		nextState <= const;
+	end if;
+	
+	if (Elv2FlN'event) then
+		Q2 <= Elv2FlN;
+		push <= '1';
+		din <= Elv2FlN;
+		nextState <= const;
+	end if;
+
+	if (UpN'event) then
+		Q <= UpN;
+		push <= '1';
+		din <= UpN;
+		nextState <= const;
+	end if;
+	if (DnN'event) then
+		Q <= DnN;
+		push <= '1';
+		din <= DnN;
+		nextState <= const;
+	end if;
+		if(Fstop = '1') then
+			FstopVar := 1;
+			nextstate <= Dec;
+		
+		end if;
+
+	if (ElvSelected = "01") then
+	push <= '0';
+	if (Elv1FlN'event) then
+		Q1 <= Elv1FlN;
+		push <= '1';
+		din <= Elv1FlN;
+		nextState <= const;
+	end if;
+	
+	if (Elv2FlN'event) then
+		Q2 <= Elv2FlN;
+		push <= '1';
+		din <= Elv2FlN;
+		nextState <= const;
+	end if;
+
+	if (UpN'event) then
+		Q <= UpN;
+		push <= '1';
+		din <= UpN;
+		nextState <= const;
+	end if;
+	if (DnN'event) then
+		Q <= DnN;
+		push <= '1';
+		din <= DnN;
+		nextState <= const;
+	end if;
+		if (Q1 > Elv1) then -- go Up Elv1
+			if(Elv1 = "001") then Elv1 <= "010";
+				if(Q1 = "010") then T <= '1'; end if;			
+			elsif(Elv1 = "010") then Elv1 <= "011";
+				if(Q1 = "011") then T <= '1'; end if;
+			elsif(Elv1 = "011") then Elv1 <= "100";
+				if(Q1 = "100") then T <= '1'; end if;
+			end if;
+		elsif (Q1 < Elv1) then  --go Dn Elv1
+			if(Elv1 = "100") then Elv1 <= "011";
+				if(Q1 = "011") then B <= '1'; end if;
+			elsif(Elv1 = "011") then Elv1 <= "010";
+				if(Q1 = "010") then B <= '1'; end if;
+			elsif(Elv1 = "010") then Elv1 <= "001";
+				if(Q1 = "001") then B <= '1'; end if;
+			end if;
+		end if;
+			if ((T = '1' or B = '1')) and (Elv1 = Q1) then
+			nextstate <= Dec;
+			else
+  			nextstate <= const;
+ 			end if;
+	end if;
+	
+	if (ElvSelected = "10") then
+	push <= '0';
+if (Elv1FlN'event) then
+		Q1 <= Elv1FlN;
+		push <= '1';
+		din <= Elv1FlN;
+		nextState <= const;
+	end if;
+	
+	if (Elv2FlN'event) then
+		Q2 <= Elv2FlN;
+		push <= '1';
+		din <= Elv2FlN;
+		nextState <= const;
+	end if;
+
+	if (UpN'event) then
+		Q <= UpN;
+		push <= '1';
+		din <= UpN;
+		nextState <= const;
+	end if;
+	if (DnN'event) then
+		Q <= DnN;
+		push <= '1';
+		din <= DnN;
+		nextState <= const;
+	end if;
+		if (Q2 > Elv2) then -- go Up Elv2
+			if(Elv2 = "001") then Elv2 <= "010";
+				if(Q2 = "010") then T <= '1'; end if;			
+			elsif(Elv2 = "010") then Elv2 <= "011";
+				if(Q2 = "011") then T <= '1'; end if;
+			elsif(Elv2 = "011") then Elv2 <= "100";
+				if(Q2 = "100") then T <= '1'; end if;
+			end if;
+		elsif (Q2 < Elv2) then  --go Dn Elv2
+			if(Elv2 = "100") then Elv2 <= "011";
+				if(Q2 = "011") then B <= '1'; end if;
+			elsif(Elv2 = "011") then Elv2 <= "010";
+				if(Q2 = "010") then B <= '1'; end if;
+			elsif(Elv2 = "010") then Elv2 <= "001";
+				if(Q2 = "001") then B <= '1'; end if;
+			end if;
+		end if;
+		if ((T = '1' or B = '1')) and (Elv2 = Q2) then
+			nextstate <= Dec;
+ 		end if;
+	end if;
+	
+	--Dec
+	when Dec => 
+	T <= '1'; B <= '1';
+	if (T = '1' and B = '1') then
+		nextstate <= Stop;
+	end if;
+
+	--stop
+	when Stop =>
+		if (FstopVar = 1) then
+			nextstate <= Stop;
+		else
+		nextstate <= openState;
+		end if;
+		if (Fstart'event) then
+			FstopVar := 0;
+			nextstate <= Acc;
+		end if;
+ 	end case;
+  	end process comblogic;
+  end beh;
+--tb
+library ieee;
+use ieee.std_logic_1164.all;
+use work.all;
+
+entity hlsm_elevator_tb is
+
+end hlsm_elevator_tb;
+
+architecture beh of hlsm_elevator_tb is
+
+component c1
+
+port (	clk, DrC : inout bit; 
+	rst: in bit; 
+	T, B : inout bit; 
+	Fo, Fc, MS : in bit; 
+	TMR: inout bit; 
+	UpN, DnN, Elv1FlN, Elv2FlN: in bit_vector (2 downto 0); 
+	Fstart, Fstop: in bit);
+
+end component;
+
+signal ct : bit;
+signal DrCt: bit;
+signal rt: bit;
+signal Tt: bit;
+signal Bt: bit;
+signal Fot: bit;
+signal Fct: bit;
+signal MSt: bit;
+signal TMRt: bit;
+signal UpNt: bit_vector (2 downto 0);
+signal Elv1FlNt: bit_vector (2 downto 0);
+signal Elv2FlNt: bit_vector (2 downto 0);
+signal DnNt: bit_vector (2 downto 0);
+signal UpCt: bit_vector (2 downto 0);
+signal DnCt: bit_vector (2 downto 0);
+signal FlCt: bit_vector (2 downto 0);
+signal Fstartt, Fstopt: bit;
+
+for all: c1 use entity work.hlsm_elevator(beh);
+
+begin
+g1: c1 port map(ct, DrCt, rt, Tt, Bt, Fot, Fct, MSt, TMRt, UpNt, DnNt, Elv1FlNt, Elv2FlNt, Fstartt, Fstopt);
+	
+	rt <= '0', '1' after 5000 ns;
+	Fot <= '0', '1' after 700 ns, '0' after 800 ns;
+	Fct <= '0', '1' after 4700 ns;
+	Fstartt <= '0', '1' after 500 ns;
+	Fstopt <= '0', '1' after 450 ns, '0' after 475 ns;
+	MSt <= '0';
+	UpNt <= "000", "100" after 150 ns;
+	Elv1FlNt <= "000", "010" after 400 ns;
+	Elv2FlNt <= "000", "100" after 1500 ns;
+	DnNt <= "000", "001" after 650 ns;
+end beh;
