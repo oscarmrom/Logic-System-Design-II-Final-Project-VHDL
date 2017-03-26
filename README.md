@@ -1,4 +1,4 @@
-
+Final Project Description:
 
 Design an Elevator Controller for a building with 4 floors. Deduce the required inputs and outputs from the following description of the system.
 Use Cases with Activity Diagrams
@@ -19,3 +19,8 @@ Flow of Events : The Elevator User arrives at the ERS panel on their floor :
 Postconditions : The elevator has arrived in response to a request. 
 Alternative Flow of Events : None. 
 Assumptions : None.
+
+
+Final Product Comments:
+
+Our final sim model was not completely executing correctly. We ran into issues when simulating stops after one floor run. The Dr. Ari Mukherjee gave us a passing grade for the effort gone into the project and what we came up with.
